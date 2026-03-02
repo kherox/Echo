@@ -1,9 +1,21 @@
 import { supabase } from './supabase';
 import { GoogleGenAI } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
+const getAi = () => {
+  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
+                 process.env.GEMINI_API_KEY || 
+                 process.env.API_KEY || 
+                 process.env.GOOGLE_API_KEY;
+  
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    throw new Error('Gemini API key is missing or invalid in memory.ts');
+  }
+  
+  return new GoogleGenAI({ apiKey });
+};
 
 export async function archiveMemory(profileId: string, content: string, theme?: string[], emotionScore?: number) {
+  const ai = getAi();
   // Generate embedding using text-embedding-004
   const embeddingResponse = await ai.models.embedContent({
     model: 'text-embedding-004',
@@ -39,6 +51,7 @@ export async function archiveMemory(profileId: string, content: string, theme?: 
 }
 
 export async function searchMemories(profileId: string, query: string, limit = 3) {
+  const ai = getAi();
   // Generate embedding for the query
   const embeddingResponse = await ai.models.embedContent({
     model: 'text-embedding-004',
@@ -70,6 +83,7 @@ export async function searchMemories(profileId: string, query: string, limit = 3
 }
 
 export async function forgetMemory(profileId: string, topic: string) {
+  const ai = getAi();
   // Generate embedding for the topic to find the closest memory to delete
   const embeddingResponse = await ai.models.embedContent({
     model: 'text-embedding-004',

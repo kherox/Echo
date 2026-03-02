@@ -1,4 +1,4 @@
-import { LlmAgent, FunctionTool } from '@google/adk';
+import { LlmAgent, FunctionTool, Gemini } from '@google/adk';
 import { chronosSearch, melodyRetriever } from './tools';
 import { archiveMemory, searchMemories, forgetMemory } from './memory';
 import { 
@@ -9,10 +9,30 @@ import {
   forgetMemoryDeclaration 
 } from './agent-declarations';
 
+const getApiKey = () => {
+  const key = process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
+              process.env.GEMINI_API_KEY || 
+              process.env.API_KEY || 
+              process.env.GOOGLE_API_KEY;
+  if (!key || key === 'MY_GEMINI_API_KEY') return '';
+  return key;
+};
+
+const apiKey = getApiKey();
+
+if (!apiKey) {
+  console.warn('WARNING: No valid Gemini API key found for agents.server.ts');
+}
+
+const model = new Gemini({
+  model: 'gemini-3-flash-preview',
+  apiKey,
+});
+
 // 1. History Agent (Chronos)
 export const historyAgent = new LlmAgent({
   name: 'HistoryAgent',
-  model: 'gemini-1.5-flash',
+  model: model,
   instruction: 'Spécialiste de la recherche historique et des faits d\'époque.',
   tools: [
     new FunctionTool({
@@ -27,7 +47,7 @@ export const historyAgent = new LlmAgent({
 // 2. Culture Agent (Melody)
 export const cultureAgent = new LlmAgent({
   name: 'CultureAgent',
-  model: 'gemini-1.5-flash',
+  model: model,
   instruction: 'Expert en musique et culture populaire des décennies passées.',
   tools: [
     new FunctionTool({
@@ -42,7 +62,7 @@ export const cultureAgent = new LlmAgent({
 // 3. Memory Agent
 export const memoryAgent = new LlmAgent({
   name: 'MemoryAgent',
-  model: 'gemini-1.5-flash',
+  model: model,
   instruction: 'Gère la mémoire biographique de l\'utilisateur (stockage, recherche, oubli).',
   tools: [
     new FunctionTool({

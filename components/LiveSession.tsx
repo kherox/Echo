@@ -12,9 +12,7 @@ import {
   forgetMemoryDeclaration
 } from '@/lib/agent-declarations';
 
-// Initialize the Gemini client
-const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
-
+// triggerDistressMode tool declaration
 const triggerDistressModeDeclaration = {
   name: 'triggerDistressMode',
   description: 'Déclenche le mode détresse dans l\'interface utilisateur. À appeler UNIQUEMENT si l\'utilisateur exprime une détresse sévère ("en finir", "partir", "douleur insupportable").',
@@ -186,6 +184,18 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
   const startSession = async () => {
     try {
       setError(null);
+      
+      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
+                     process.env.GEMINI_API_KEY || 
+                     process.env.API_KEY || 
+                     process.env.GOOGLE_API_KEY;
+
+      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+        throw new Error('Gemini API key is missing or invalid. Please configure it in the Secrets panel.');
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      
       const ctx = initAudioContext();
       if (ctx.state === 'suspended') {
         await ctx.resume();

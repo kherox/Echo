@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { historyAgent, cultureAgent, memoryAgent } from '@/lib/agents.server';
 
 export async function POST(req: Request) {
+  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
+  console.log('API Key present:', !!apiKey, 'Length:', apiKey?.length || 0);
+  
   try {
     const { toolName, args } = await req.json();
 
