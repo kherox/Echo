@@ -3,40 +3,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Mic, MicOff, PhoneOff, AlertCircle, Clock, Volume2 } from 'lucide-react';
-import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration } from '@google/genai';
-import { chronosSearch, melodyRetriever } from '@/lib/tools';
-import { archiveMemory, searchMemories } from '@/lib/memory';
+import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
+import { 
+  historyAgentDeclaration, 
+  cultureAgentDeclaration, 
+  archiveMemoryDeclaration, 
+  searchMemoriesDeclaration, 
+  forgetMemoryDeclaration
+} from '@/lib/agent-declarations';
 
 // Initialize the Gemini client
 const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
 
-const chronosSearchDeclaration: FunctionDeclaration = {
-  name: 'chronosSearch',
-  description: 'Recherche un fait historique lié au récit de l\'utilisateur. Ne déclencher que si l\'utilisateur mentionne une date ou un lieu.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      query: { type: Type.STRING, description: 'Le sujet de la recherche historique' },
-      yearHint: { type: Type.NUMBER, description: 'L\'année mentionnée par l\'utilisateur, si applicable' },
-    },
-    required: ['query'],
-  },
-};
-
-const melodyRetrieverDeclaration: FunctionDeclaration = {
-  name: 'melodyRetriever',
-  description: 'Propose une chanson d\'époque quand l\'utilisateur évoque une période ou un événement.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      era: { type: Type.STRING, description: 'La décennie (ex: "1960s", "1970s")' },
-      keywords: { type: Type.STRING, description: 'Le thème ou l\'événement évoqué' },
-    },
-    required: ['era', 'keywords'],
-  },
-};
-
-const triggerDistressModeDeclaration: FunctionDeclaration = {
+const triggerDistressModeDeclaration = {
   name: 'triggerDistressMode',
   description: 'Déclenche le mode détresse dans l\'interface utilisateur. À appeler UNIQUEMENT si l\'utilisateur exprime une détresse sévère ("en finir", "partir", "douleur insupportable").',
   parameters: {
@@ -45,32 +24,6 @@ const triggerDistressModeDeclaration: FunctionDeclaration = {
       reason: { type: Type.STRING, description: 'La raison du déclenchement' },
     },
     required: ['reason'],
-  },
-};
-
-const archiveMemoryDeclaration: FunctionDeclaration = {
-  name: 'archiveMemory',
-  description: 'Extrait et stocke un fait biographique nouveau mentionné par l\'utilisateur.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      content: { type: Type.STRING, description: 'Le résumé du souvenir (max 2000 caractères)' },
-      theme: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Tags thématiques (ex: famille, jeunesse, métier)' },
-      emotionScore: { type: Type.NUMBER, description: 'Intensité émotionnelle estimée de 1 à 5' },
-    },
-    required: ['content'],
-  },
-};
-
-const searchMemoriesDeclaration: FunctionDeclaration = {
-  name: 'searchMemories',
-  description: 'Recherche des souvenirs sémantiquement proches du sujet en cours.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      query: { type: Type.STRING, description: 'Le sujet en cours de discussion' },
-    },
-    required: ['query'],
   },
 };
 
@@ -87,18 +40,20 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [userVolume, setUserVolume] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [distressMode, setDistressMode] = useState(false);
-  const [transcripts, setTranscripts] = useState<{ role: string; text: string }[]>([]);
 
   const sessionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
   const playbackQueueRef = useRef<Float32Array[]>([]);
   const isPlayingRef = useRef(false);
   const nextPlayTimeRef = useRef(0);
+  const animationFrameRef = useRef<number | null>(null);
 
   // System instructions based on the profile
   const systemInstruction = `
@@ -124,6 +79,15 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
     return () => clearInterval(timer);
   }, [isConnected]);
 
+  // Clean up animation frame
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
+
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -137,6 +101,25 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
       });
     }
     return audioContextRef.current;
+  };
+
+  const updateVolume = () => {
+    if (!analyserRef.current || !isRecording) {
+      setUserVolume(0);
+      return;
+    }
+
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(dataArray);
+    
+    let values = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      values += dataArray[i];
+    }
+    const average = values / dataArray.length;
+    setUserVolume(average);
+
+    animationFrameRef.current = requestAnimationFrame(updateVolume);
   };
 
   const playAudioChunk = (base64Audio: string) => {
@@ -173,7 +156,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
 
     const chunk = playbackQueueRef.current.shift()!;
     const buffer = ctx.createBuffer(1, chunk.length, 24000);
-    buffer.copyToChannel(chunk, 0);
+    buffer.getChannelData(0).set(chunk);
 
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -212,7 +195,15 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
       mediaStreamRef.current = stream;
 
       const source = ctx.createMediaStreamSource(stream);
-      // Use ScriptProcessor for raw PCM access (deprecated but widely supported for this use case)
+      
+      // Analyser for user volume visualization
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyserRef.current = analyser;
+      source.connect(analyser);
+      updateVolume();
+
+      // Use ScriptProcessor for raw PCM access
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
@@ -229,7 +220,16 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
               prebuiltVoiceConfig: { voiceName: 'Kore' }, // Warm, friendly voice
             },
           },
-          tools: [{ functionDeclarations: [chronosSearchDeclaration, melodyRetrieverDeclaration, triggerDistressModeDeclaration, archiveMemoryDeclaration, searchMemoriesDeclaration] }],
+          tools: [{ 
+            functionDeclarations: [
+              historyAgentDeclaration, 
+              cultureAgentDeclaration, 
+              triggerDistressModeDeclaration, 
+              archiveMemoryDeclaration, 
+              searchMemoriesDeclaration, 
+              forgetMemoryDeclaration
+            ] 
+          }],
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
@@ -282,24 +282,23 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
                 toolCalls.map(async (call) => {
                   let result = null;
                   try {
-                    if (call.name === 'chronosSearch') {
-                      const args = call.args as { query: string; yearHint?: number };
-                      result = await chronosSearch(args.query, args.yearHint);
-                    } else if (call.name === 'melodyRetriever') {
-                      const args = call.args as { era: string; keywords: string };
-                      result = await melodyRetriever(args.era, args.keywords);
-                    } else if (call.name === 'triggerDistressMode') {
+                    if (call.name === 'triggerDistressMode') {
                       setDistressMode(true);
                       result = { status: 'success', message: 'Distress mode activated in UI' };
-                    } else if (call.name === 'archiveMemory') {
-                      const args = call.args as { content: string; theme?: string[]; emotionScore?: number };
-                      // Using a dummy profile ID for the MVP if not authenticated
-                      const profileId = '00000000-0000-0000-0000-000000000000';
-                      result = await archiveMemory(profileId, args.content, args.theme, args.emotionScore);
-                    } else if (call.name === 'searchMemories') {
-                      const args = call.args as { query: string };
-                      const profileId = '00000000-0000-0000-0000-000000000000';
-                      result = await searchMemories(profileId, args.query);
+                    } else {
+                      // Call the server-side agent API for all other tools
+                      const response = await fetch('/api/agents/execute', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ toolName: call.name, args: call.args }),
+                      });
+                      
+                      if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to execute agent tool');
+                      }
+                      
+                      result = await response.json();
                     }
                   } catch (e) {
                     console.error(`Tool error (${call.name}):`, e);
@@ -334,6 +333,9 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
   };
 
   const handleEndSession = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -349,6 +351,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
     stopPlayback();
     setIsConnected(false);
     setIsRecording(false);
+    setUserVolume(0);
     onEndSession();
   };
 
@@ -358,116 +361,211 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsRecording(audioTrack.enabled);
+        if (audioTrack.enabled) {
+          updateVolume();
+        } else {
+          setUserVolume(0);
+        }
       }
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#151619] p-6 font-mono text-white">
-      <div className="w-full max-w-md bg-[#1c1d21] rounded-3xl shadow-2xl p-8 relative overflow-hidden">
-        
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0a0502] p-6 font-mono text-white overflow-hidden relative">
+      {/* Immersive Background Gradients */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <motion.div
+          animate={{
+            opacity: isSpeaking ? 0.4 : isRecording && userVolume > 5 ? 0.3 : 0.1,
+            scale: isSpeaking ? 1.2 : 1,
+          }}
+          className={`absolute top-[-20%] left-[-10%] w-[70%] h-[70%] rounded-full blur-[120px] transition-colors duration-1000 ${
+            distressMode ? 'bg-red-900' : isSpeaking ? 'bg-[#5A5A40]' : 'bg-blue-900'
+          }`}
+        />
+        <motion.div
+          animate={{
+            opacity: isSpeaking ? 0.3 : isRecording && userVolume > 5 ? 0.4 : 0.1,
+            scale: isRecording && userVolume > 5 ? 1.2 : 1,
+          }}
+          className={`absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] rounded-full blur-[120px] transition-colors duration-1000 ${
+            distressMode ? 'bg-orange-900' : isRecording && userVolume > 5 ? 'bg-cyan-900' : 'bg-purple-900'
+          }`}
+        />
+      </div>
+
+      <div className="w-full max-w-lg z-10">
         {/* Header */}
-        <div className="flex justify-between items-center mb-12">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-            <span className="text-xs text-gray-400 tracking-widest uppercase">
-              {isConnected ? 'En Ligne' : 'Hors Ligne'}
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex justify-between items-center mb-16 px-4"
+        >
+          <div className="flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
+            <span className="text-[10px] text-gray-400 tracking-[0.2em] uppercase font-sans font-bold">
+              {isConnected ? 'Session Active' : 'Connexion...'}
             </span>
           </div>
-          <div className="flex items-center gap-2 text-gray-400">
-            <Clock size={14} />
-            <span className="text-sm">{formatDuration(sessionDuration)}</span>
+          <div className="flex items-center gap-2 text-gray-400 bg-white/5 backdrop-blur-md px-4 py-2 rounded-full border border-white/10">
+            <Clock size={14} className="text-[#5A5A40]" />
+            <span className="text-xs font-medium tracking-widest">{formatDuration(sessionDuration)}</span>
           </div>
-        </div>
+        </motion.div>
 
         {/* Main Visualization */}
-        <div className="flex flex-col items-center justify-center py-12">
-          <div className="relative w-48 h-48 flex items-center justify-center">
-            {/* Pulsing rings when speaking */}
+        <div className="flex flex-col items-center justify-center py-12 relative">
+          <div className="relative w-64 h-64 flex items-center justify-center">
+            {/* AI Speaking Waves (Golden/Warm) */}
             {isSpeaking && (
-              <>
-                <motion.div
-                  initial={{ scale: 0.8, opacity: 0.5 }}
-                  animate={{ scale: 1.5, opacity: 0 }}
-                  transition={{ repeat: Infinity, duration: 2, ease: "easeOut" }}
-                  className="absolute inset-0 rounded-full border-2 border-[#5A5A40]"
-                />
-                <motion.div
-                  initial={{ scale: 0.8, opacity: 0.5 }}
-                  animate={{ scale: 1.8, opacity: 0 }}
-                  transition={{ repeat: Infinity, duration: 2, delay: 0.5, ease: "easeOut" }}
-                  className="absolute inset-0 rounded-full border border-[#5A5A40]"
-                />
-              </>
+              <div className="absolute inset-0 flex items-center justify-center">
+                {[1, 2, 3].map((i) => (
+                  <motion.div
+                    key={`ai-wave-${i}`}
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: [0.8, 1.8], opacity: [0.6, 0] }}
+                    transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.8, ease: "easeOut" }}
+                    className="absolute inset-0 rounded-full border border-[#5A5A40]/40"
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* User Speaking Waves (Cyan/Cool) */}
+            {isRecording && userVolume > 5 && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                {[1, 2, 3].map((i) => (
+                  <motion.div
+                    key={`user-wave-${i}`}
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ 
+                      scale: [0.8, 1 + (userVolume / 40)], 
+                      opacity: [0.4, 0],
+                      borderWidth: [1, 3, 1]
+                    }}
+                    transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.5, ease: "easeOut" }}
+                    className="absolute inset-0 rounded-full border border-cyan-500/30"
+                  />
+                ))}
+              </div>
             )}
             
             {/* Central Orb */}
             <motion.div
               animate={{ 
-                scale: isSpeaking ? [1, 1.05, 1] : 1,
+                scale: isSpeaking ? [1, 1.08, 1] : isRecording && userVolume > 5 ? [1, 1.03, 1] : 1,
+                borderColor: distressMode 
+                  ? "#ef4444" 
+                  : isSpeaking 
+                    ? "#5A5A40" 
+                    : isRecording && userVolume > 5 
+                      ? "#06b6d4" 
+                      : "rgba(255,255,255,0.1)",
                 boxShadow: isSpeaking 
-                  ? "0 0 40px rgba(90, 90, 64, 0.6)" 
-                  : "0 0 20px rgba(0, 0, 0, 0.5)"
+                  ? "0 0 60px rgba(90, 90, 64, 0.4)" 
+                  : isRecording && userVolume > 5 
+                    ? "0 0 40px rgba(6, 182, 212, 0.3)" 
+                    : "0 0 20px rgba(0, 0, 0, 0.5)"
               }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-              className={`w-32 h-32 rounded-full flex items-center justify-center z-10 transition-colors duration-500 ${
-                distressMode ? 'bg-red-900/50 border-red-500' : 'bg-[#2a2b30] border-[#3a3b40]'
-              } border-2`}
+              transition={{ duration: 0.5 }}
+              className={`w-40 h-40 rounded-full flex items-center justify-center z-10 backdrop-blur-xl border-2 transition-all duration-700 ${
+                distressMode ? 'bg-red-950/40' : 'bg-white/5'
+              }`}
             >
-              {isSpeaking ? (
-                <Volume2 size={40} className={distressMode ? 'text-red-400' : 'text-[#d4d4c8]'} />
-              ) : (
-                <Mic size={40} className="text-gray-500" />
-              )}
+              <div className="relative">
+                {isSpeaking ? (
+                  <motion.div
+                    animate={{ opacity: [0.5, 1, 0.5] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                  >
+                    <Volume2 size={48} className={distressMode ? 'text-red-400' : 'text-[#d4d4c8]'} />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    animate={{ 
+                      scale: isRecording && userVolume > 5 ? 1.2 : 1,
+                      color: isRecording && userVolume > 5 ? "#06b6d4" : "#9ca3af"
+                    }}
+                  >
+                    <Mic size={48} />
+                  </motion.div>
+                )}
+              </div>
             </motion.div>
           </div>
           
-          <div className="mt-8 text-center h-12">
-            <p className="text-gray-400 text-sm">
-              {isSpeaking ? "L'Écho parle..." : isConnected ? "L'Écho vous écoute..." : "Prêt à commencer"}
-            </p>
-            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+          <div className="mt-16 text-center">
+            <motion.div
+              key={isSpeaking ? 'ai' : isRecording && userVolume > 5 ? 'user' : 'idle'}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-2"
+            >
+              <p className={`text-xs tracking-[0.3em] uppercase font-bold ${
+                isSpeaking ? 'text-[#5A5A40]' : isRecording && userVolume > 5 ? 'text-cyan-400' : 'text-gray-500'
+              }`}>
+                {isSpeaking ? "L'Écho s'exprime" : isRecording && userVolume > 5 ? "Vous parlez" : "À votre écoute"}
+              </p>
+              <p className="text-gray-400 text-[10px] font-sans italic opacity-60">
+                {isSpeaking ? "Écoute active en cours..." : isRecording && userVolume > 5 ? "Je vous entends bien" : "Dites quelque chose..."}
+              </p>
+            </motion.div>
+            {error && <p className="text-red-400 text-xs mt-4 bg-red-950/30 px-4 py-2 rounded-lg border border-red-900/50">{error}</p>}
           </div>
         </div>
 
         {/* Controls */}
-        <div className="flex justify-center gap-6 mt-8">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex justify-center items-center gap-10 mt-12 mb-8"
+        >
           {!isConnected ? (
             <button
               onClick={startSession}
-              className="w-16 h-16 rounded-full bg-[#5A5A40] flex items-center justify-center hover:bg-[#4a4a35] transition-colors shadow-lg"
+              className="group relative w-20 h-20 flex items-center justify-center"
             >
-              <Mic size={24} className="text-white" />
+              <div className="absolute inset-0 bg-[#5A5A40] rounded-full blur-md opacity-40 group-hover:opacity-60 transition-opacity" />
+              <div className="relative w-full h-full rounded-full bg-[#5A5A40] flex items-center justify-center hover:bg-[#4a4a35] transition-all transform hover:scale-105 shadow-xl border border-white/10">
+                <Mic size={28} className="text-white" />
+              </div>
             </button>
           ) : (
             <>
               <button
                 onClick={toggleMute}
-                className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${
-                  isRecording ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-red-900/50 text-red-400 hover:bg-red-900/70'
+                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all border ${
+                  isRecording 
+                    ? 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10' 
+                    : 'bg-red-900/30 text-red-400 border-red-900/50 hover:bg-red-900/50'
                 }`}
               >
-                {isRecording ? <Mic size={20} /> : <MicOff size={20} />}
+                {isRecording ? <Mic size={24} /> : <MicOff size={24} />}
               </button>
               
               <button
                 onClick={handleEndSession}
-                className="w-14 h-14 rounded-full bg-red-600 flex items-center justify-center hover:bg-red-700 transition-colors shadow-lg"
+                className="w-20 h-20 rounded-full bg-red-600 flex items-center justify-center hover:bg-red-700 transition-all transform hover:scale-105 shadow-[0_0_30px_rgba(220,38,38,0.4)] border border-white/10"
               >
-                <PhoneOff size={20} className="text-white" />
+                <PhoneOff size={28} className="text-white" />
               </button>
             </>
           )}
-        </div>
+        </motion.div>
 
         {/* Distress Alert Indicator */}
         {distressMode && (
-          <div className="absolute top-4 right-4 flex items-center gap-2 text-red-400 bg-red-900/20 px-3 py-1.5 rounded-full text-xs">
-            <AlertCircle size={14} />
-            <span>Mode Écoute Sécurisée</span>
-          </div>
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex items-center justify-center gap-2 text-red-400 bg-red-950/40 backdrop-blur-md border border-red-500/30 px-6 py-3 rounded-full text-[10px] tracking-widest uppercase font-bold mx-auto w-fit"
+          >
+            <AlertCircle size={16} />
+            <span>Mode Écoute Sécurisée Activé</span>
+          </motion.div>
         )}
       </div>
     </div>
   );
 }
+
