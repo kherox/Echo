@@ -1,0 +1,5 @@
+{
+  "name": "L'ÉCHO",
+  "description": "Compagnon de récit vocal pour les seniors",
+  "requestFramePermissions": ["microphone"]
+}
