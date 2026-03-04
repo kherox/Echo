@@ -66,3 +66,58 @@ export const forgetMemoryDeclaration: FunctionDeclaration = {
     required: ['topic'],
   },
 };
+
+// 4. Atlas Agent (Google Search Grounding)
+export const atlasAgentDeclaration: FunctionDeclaration = {
+  name: 'atlasSearch',
+  description: 'Effectue une recherche Google officielle pour obtenir des informations en temps réel, des articles de presse ou des faits d\'actualité avec un rendu visuel riche.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: { type: Type.STRING, description: 'La recherche précise à effectuer sur Google' }
+    },
+    required: ['query'],
+  },
+};
+
+// 5. Media Agent (Studio)
+export const mediaControlDeclaration: FunctionDeclaration = {
+  name: 'controlMedia',
+  description: 'Recherche et prépare la lecture d\'un contenu média (vidéo YouTube ou musique) en s\'appuyant sur les recherches Google.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      mediaType: { type: Type.STRING, enum: ['video', 'music'], description: 'Le type de média à rechercher' },
+      query: { type: Type.STRING, description: 'Le titre ou le sujet du média' },
+    },
+    required: ['mediaType', 'query'],
+  },
+};
+
+// 6. Communication Agent (Email)
+export const sendEmailDeclaration: FunctionDeclaration = {
+  name: 'sendEmail',
+  description: 'Envoie un e-mail au nom de l\'utilisateur. Utile pour résumer une discussion, partager un souvenir ou demander de l\'aide à un proche.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      to: { type: Type.STRING, description: 'L\'adresse e-mail du destinataire' },
+      subject: { type: Type.STRING, description: 'L\'objet de l\'e-mail' },
+      body: { type: Type.STRING, description: 'Le contenu du message' },
+    },
+    required: ['to', 'subject', 'body'],
+  },
+};
+
+// 7. Communication Agent (Inbox)
+export const listEmailsDeclaration: FunctionDeclaration = {
+  name: 'listEmails',
+  description: 'Liste les messages reçus dans la boîte de réception de l\'utilisateur pour prendre de ses nouvelles ou rester connecté.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      limit: { type: Type.NUMBER, description: 'Nombre maximum de messages à récupérer' },
+    },
+  },
+};
+

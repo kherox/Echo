@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server';
-import { historyAgent, cultureAgent, memoryAgent } from '@/lib/agents.server';
+import { historyAgent, cultureAgent, memoryAgent, mediaAgent, atlasAgent } from '@/lib/agents.server';
 
 export async function POST(req: Request) {
-  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.API_KEY;
-  console.log('API Key present:', !!apiKey, 'Length:', apiKey?.length || 0);
-  
   try {
     const { toolName, args } = await req.json();
 
@@ -12,6 +9,8 @@ export async function POST(req: Request) {
 
     if (toolName === 'chronosSearch') {
       result = await (historyAgent.tools[0] as any).execute(args);
+    } else if (toolName === 'webSearch') {
+      result = await (historyAgent.tools[1] as any).execute(args);
     } else if (toolName === 'melodyRetriever') {
       result = await (cultureAgent.tools[0] as any).execute(args);
     } else if (toolName === 'archiveMemory') {
@@ -20,7 +19,19 @@ export async function POST(req: Request) {
       result = await (memoryAgent.tools[1] as any).execute(args);
     } else if (toolName === 'forgetMemory') {
       result = await (memoryAgent.tools[2] as any).execute(args);
+    } else if (toolName === 'controlMedia') {
+      result = await (mediaAgent.tools[0] as any).execute(args);
+    } else if (toolName === 'atlasSearch') {
+      const { atlasSearch } = await import('@/lib/tools');
+      result = await atlasSearch(args.query);
+    } else if (toolName === 'sendEmail') {
+      const { sendEmail } = await import('@/lib/tools');
+      result = await sendEmail(args.to, args.subject, args.body);
+    } else if (toolName === 'listEmails') {
+      const { listEmails } = await import('@/lib/tools');
+      result = await listEmails(args.limit);
     } else {
+
       return NextResponse.json({ error: `Unknown tool: ${toolName}` }, { status: 400 });
     }
 

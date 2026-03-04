@@ -1,16 +1,22 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'motion/react';
-import { Mic, MicOff, PhoneOff, AlertCircle, Clock, Volume2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Mic, MicOff, PhoneOff, AlertCircle, Clock, Volume2, Mail, CheckCircle2 } from 'lucide-react';
 import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
-import { 
-  historyAgentDeclaration, 
-  cultureAgentDeclaration, 
-  archiveMemoryDeclaration, 
-  searchMemoriesDeclaration, 
-  forgetMemoryDeclaration
+import {
+  historyAgentDeclaration,
+  cultureAgentDeclaration,
+  archiveMemoryDeclaration,
+  searchMemoriesDeclaration,
+  forgetMemoryDeclaration,
+  atlasAgentDeclaration,
+  mediaControlDeclaration,
+  sendEmailDeclaration,
+  listEmailsDeclaration
 } from '@/lib/agent-declarations';
+import { Search, Youtube, Newspaper, X, ExternalLink, Sparkles } from 'lucide-react';
+
 
 // triggerDistressMode tool declaration
 const triggerDistressModeDeclaration = {
@@ -42,6 +48,10 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
   const [error, setError] = useState<string | null>(null);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [distressMode, setDistressMode] = useState(false);
+  const [activeMedia, setActiveMedia] = useState<any>(null);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showResults, setShowResults] = useState(false);
+
 
   const sessionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -60,12 +70,21 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
     Tu t'adresses à ${profile.firstName}, né(e) en ${profile.birthYear}.
     Tu dois utiliser le ${profile.tonePreference === 'formal' ? 'vouvoiement' : 'tutoiement'}.
     
+    CAPACITÉS SPÉCIALES :
+    - Tu as accès à **Atlas**, une recherche Google en temps réel. Si l'utilisateur pose une question sur l'actualité, la météo, ou veut en savoir plus sur un sujet récent, utilise l'outil 'atlasSearch'.
+    - Tu peux rechercher des vidéos ou de la musique via l'outil 'controlMedia'.
+    - Tu peux explorer des faits historiques via 'chronosSearch'.
+    - Tu peux sauvegarder ou lire des souvenirs via les outils de mémoire.
+    - Tu peux envoyer des e-mails via 'sendEmail' et consulter la boîte de réception via 'listEmails'. Si l'utilisateur veut envoyer un message à un proche ou résumer la discussion, demande-lui l'adresse et le sujet s'ils ne sont pas clairs.
+
     RÈGLES STRICTES :
-    1. Ne donne JAMAIS de conseils médicaux, financiers ou juridiques. Si on t'en demande, réponds : "C'est une question importante, mais en tant que compagnon de discussion, je ne suis pas en mesure d'y répondre. Qu'en pense votre médecin ou votre entourage ?"
-    2. Si tu détectes de la détresse sévère ("en finir", "partir", "douleur insupportable"), bascule en mode Écoute Empathique Limitée et dis : "Je sens que vous traversez un moment difficile. Je suis là pour vous écouter. Avez-vous quelqu'un à qui vous pourriez en parler de vive voix maintenant — un proche, votre médecin ?"
-    3. Pratique l'écoute active. Insère des marqueurs d'écoute ("je vois", "en effet").
-    4. Sois concis dans tes réponses pour laisser la place au récit.
+    1. Ne donne JAMAIS de conseils médicaux, financiers ou juridiques.
+    2. Si tu détectes de la détresse sévère, bascule en mode Écoute Empathique Limitée.
+    3. Pratique l'écoute active.
+    4. Sois concis dans tes réponses orales, mais n'hésite pas à lancer une recherche 'atlasSearch' pour afficher des résultats visuels riches à l'écran si le sujet le justifie.
   `;
+
+  const [emailStatus, setEmailStatus] = useState<{ status: 'idle' | 'sending' | 'success', message?: string }>({ status: 'idle' });
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -109,7 +128,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
 
     const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
     analyserRef.current.getByteFrequencyData(dataArray);
-    
+
     let values = 0;
     for (let i = 0; i < dataArray.length; i++) {
       values += dataArray[i];
@@ -145,7 +164,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
 
   const schedulePlayback = () => {
     if (isPlayingRef.current || playbackQueueRef.current.length === 0) return;
-    
+
     const ctx = audioContextRef.current;
     if (!ctx) return;
 
@@ -184,18 +203,18 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
   const startSession = async () => {
     try {
       setError(null);
-      
-      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
-                     process.env.GEMINI_API_KEY || 
-                     process.env.API_KEY || 
-                     process.env.GOOGLE_API_KEY;
+
+      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
+        process.env.GEMINI_API_KEY ||
+        process.env.API_KEY ||
+        process.env.GOOGLE_API_KEY;
 
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
         throw new Error('Gemini API key is missing or invalid. Please configure it in the Secrets panel.');
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      
+
       const ctx = initAudioContext();
       if (ctx.state === 'suspended') {
         await ctx.resume();
@@ -205,7 +224,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
       mediaStreamRef.current = stream;
 
       const source = ctx.createMediaStreamSource(stream);
-      
+
       // Analyser for user volume visualization
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
@@ -230,15 +249,19 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
               prebuiltVoiceConfig: { voiceName: 'Kore' }, // Warm, friendly voice
             },
           },
-          tools: [{ 
+          tools: [{
             functionDeclarations: [
-              historyAgentDeclaration, 
-              cultureAgentDeclaration, 
-              triggerDistressModeDeclaration, 
-              archiveMemoryDeclaration, 
-              searchMemoriesDeclaration, 
-              forgetMemoryDeclaration
-            ] 
+              historyAgentDeclaration,
+              cultureAgentDeclaration,
+              triggerDistressModeDeclaration,
+              archiveMemoryDeclaration,
+              searchMemoriesDeclaration,
+              forgetMemoryDeclaration,
+              atlasAgentDeclaration,
+              mediaControlDeclaration,
+              sendEmailDeclaration,
+              listEmailsDeclaration
+            ]
           }],
           inputAudioTranscription: {},
           outputAudioTranscription: {},
@@ -247,7 +270,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
           onopen: () => {
             setIsConnected(true);
             setIsRecording(true);
-            
+
             // Start sending audio
             processor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
@@ -256,7 +279,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
               for (let i = 0; i < inputData.length; i++) {
                 pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
               }
-              
+
               // Convert to Base64
               const buffer = new Uint8Array(pcm16.buffer);
               let binary = '';
@@ -302,15 +325,33 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ toolName: call.name, args: call.args }),
                       });
-                      
+
                       if (!response.ok) {
                         const errorData = await response.json();
                         throw new Error(errorData.error || 'Failed to execute agent tool');
                       }
-                      
+
                       result = await response.json();
+
+                      // UI Side Effects based on tool result
+                      if (call.name === 'atlasSearch') {
+                        setSearchResults(result.renderedContent
+                          ? [{ renderedContent: result.renderedContent }]
+                          : (result.results || (result.answer ? [{ title: 'Réponse', snippet: result.answer }] : []))
+                        );
+                        setShowResults(true);
+                      } else if (call.name === 'controlMedia') {
+                        setActiveMedia(result);
+                        if (result.status === 'success') setShowResults(false);
+                      } else if (call.name === 'sendEmail') {
+                        const args = call.args as { to?: string } | undefined;
+                        const recipient = args?.to || 'destinataire';
+                        setEmailStatus({ status: 'success', message: `E-mail envoyé à ${recipient}` });
+                        setTimeout(() => setEmailStatus({ status: 'idle' }), 5000);
+                      }
                     }
                   } catch (e) {
+
                     console.error(`Tool error (${call.name}):`, e);
                   }
                   return {
@@ -386,30 +427,33 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <motion.div
           animate={{
-            opacity: isSpeaking ? 0.4 : isRecording && userVolume > 5 ? 0.3 : 0.1,
-            scale: isSpeaking ? 1.2 : 1,
+            opacity: isSpeaking ? 0.6 : isRecording && userVolume > 5 ? 0.4 : 0.2,
+            scale: isSpeaking ? 1.4 : 1.1,
+            rotate: [0, 10, 0],
           }}
-          className={`absolute top-[-20%] left-[-10%] w-[70%] h-[70%] rounded-full blur-[120px] transition-colors duration-1000 ${
-            distressMode ? 'bg-red-900' : isSpeaking ? 'bg-[#5A5A40]' : 'bg-blue-900'
-          }`}
+          transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+          className={`absolute top-[-25%] left-[-15%] w-[80%] h-[80%] rounded-full blur-[140px] transition-colors duration-[2000ms] ${distressMode ? 'bg-red-900/40' : isSpeaking ? 'bg-[#5A5A40]/40' : 'bg-blue-950/40'
+            }`}
         />
         <motion.div
           animate={{
-            opacity: isSpeaking ? 0.3 : isRecording && userVolume > 5 ? 0.4 : 0.1,
-            scale: isRecording && userVolume > 5 ? 1.2 : 1,
+            opacity: isSpeaking ? 0.4 : isRecording && userVolume > 5 ? 0.5 : 0.2,
+            scale: isRecording && userVolume > 5 ? 1.4 : 1.1,
+            rotate: [0, -10, 0],
           }}
-          className={`absolute bottom-[-20%] right-[-10%] w-[70%] h-[70%] rounded-full blur-[120px] transition-colors duration-1000 ${
-            distressMode ? 'bg-orange-900' : isRecording && userVolume > 5 ? 'bg-cyan-900' : 'bg-purple-900'
-          }`}
+          transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+          className={`absolute bottom-[-25%] right-[-15%] w-[80%] h-[80%] rounded-full blur-[140px] transition-colors duration-[2000ms] ${distressMode ? 'bg-orange-900/40' : isRecording && userVolume > 5 ? 'bg-cyan-950/40' : 'bg-purple-950/40'
+            }`}
         />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,#0a0502_100%)]" />
       </div>
 
-      <div className="w-full max-w-lg z-10">
+      <div className="w-full max-w-lg z-10 flex flex-col min-h-[600px] justify-center relative">
         {/* Header */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex justify-between items-center mb-16 px-4"
+          className="flex justify-between items-center mb-8 px-4"
         >
           <div className="flex items-center gap-3">
             <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`} />
@@ -423,114 +467,250 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
           </div>
         </motion.div>
 
-        {/* Main Visualization */}
-        <div className="flex flex-col items-center justify-center py-12 relative">
-          <div className="relative w-64 h-64 flex items-center justify-center">
-            {/* AI Speaking Waves (Golden/Warm) */}
-            {isSpeaking && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                {[1, 2, 3].map((i) => (
-                  <motion.div
-                    key={`ai-wave-${i}`}
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: [0.8, 1.8], opacity: [0.6, 0] }}
-                    transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.8, ease: "easeOut" }}
-                    className="absolute inset-0 rounded-full border border-[#5A5A40]/40"
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* User Speaking Waves (Cyan/Cool) */}
-            {isRecording && userVolume > 5 && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                {[1, 2, 3].map((i) => (
-                  <motion.div
-                    key={`user-wave-${i}`}
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ 
-                      scale: [0.8, 1 + (userVolume / 40)], 
-                      opacity: [0.4, 0],
-                      borderWidth: [1, 3, 1]
-                    }}
-                    transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.5, ease: "easeOut" }}
-                    className="absolute inset-0 rounded-full border border-cyan-500/30"
-                  />
-                ))}
-              </div>
-            )}
-            
-            {/* Central Orb */}
+        {/* Main Content Area (Dynamic) */}
+        <div className="flex-1 flex flex-col items-center justify-center py-6 relative">
+          {activeMedia && activeMedia.status === 'success' ? (
             <motion.div
-              animate={{ 
-                scale: isSpeaking ? [1, 1.08, 1] : isRecording && userVolume > 5 ? [1, 1.03, 1] : 1,
-                borderColor: distressMode 
-                  ? "#ef4444" 
-                  : isSpeaking 
-                    ? "#5A5A40" 
-                    : isRecording && userVolume > 5 
-                      ? "#06b6d4" 
-                      : "rgba(255,255,255,0.1)",
-                boxShadow: isSpeaking 
-                  ? "0 0 60px rgba(90, 90, 64, 0.4)" 
-                  : isRecording && userVolume > 5 
-                    ? "0 0 40px rgba(6, 182, 212, 0.3)" 
-                    : "0 0 20px rgba(0, 0, 0, 0.5)"
-              }}
-              transition={{ duration: 0.5 }}
-              className={`w-40 h-40 rounded-full flex items-center justify-center z-10 backdrop-blur-xl border-2 transition-all duration-700 ${
-                distressMode ? 'bg-red-950/40' : 'bg-white/5'
-              }`}
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              className="w-full flex flex-col items-center mb-8"
             >
-              <div className="relative">
-                {isSpeaking ? (
-                  <motion.div
-                    animate={{ opacity: [0.5, 1, 0.5] }}
-                    transition={{ repeat: Infinity, duration: 2 }}
-                  >
-                    <Volume2 size={48} className={distressMode ? 'text-red-400' : 'text-[#d4d4c8]'} />
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    animate={{ 
-                      scale: isRecording && userVolume > 5 ? 1.2 : 1,
-                      color: isRecording && userVolume > 5 ? "#06b6d4" : "#9ca3af"
-                    }}
-                  >
-                    <Mic size={48} />
-                  </motion.div>
-                )}
+              <div className="w-full relative group">
+                {/* Cinematic Glow behind video */}
+                <div className="absolute -inset-4 bg-[#5A5A40]/10 rounded-[40px] blur-2xl opacity-50 group-hover:opacity-100 transition-opacity duration-1000" />
+
+                <div className="relative overflow-hidden rounded-[32px] border border-white/10 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.8)] bg-black aspect-video">
+                  <iframe
+                    width="100%"
+                    height="100%"
+                    src={`https://www.youtube.com/embed/${activeMedia.videoId}?autoplay=1&modestbranding=1&rel=0`}
+                    title={activeMedia.title}
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+
+                  {/* Premium Overlay for close */}
+                  <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex justify-between items-center">
+                    <span className="text-[10px] text-gray-300 tracking-widest uppercase font-bold flex items-center gap-2">
+                      <Youtube size={14} className="text-red-600" />
+                      Diffusion Studio Echo
+                    </span>
+                    <button
+                      onClick={() => setActiveMedia(null)}
+                      className="p-2 bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-all"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
               </div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mt-6 text-center"
+              >
+                <h4 className="text-lg font-serif italic text-white/90 drop-shadow-lg">{activeMedia.title}</h4>
+                <div className="w-12 h-[1px] bg-[#5A5A40] mx-auto mt-3 opacity-60" />
+              </motion.div>
             </motion.div>
-          </div>
-          
-          <div className="mt-16 text-center">
+          ) : (
+            <div className="relative w-64 h-64 flex items-center justify-center">
+              {/* AI Speaking Waves (Golden/Warm) */}
+              {isSpeaking && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  {[1, 2, 3].map((i) => (
+                    <motion.div
+                      key={`ai-wave-${i}`}
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: [0.8, 1.8], opacity: [0.6, 0] }}
+                      transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.8, ease: "easeOut" }}
+                      className="absolute inset-0 rounded-full border border-[#5A5A40]/40"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* User Speaking Waves (Cyan/Cool) */}
+              {isRecording && userVolume > 5 && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  {[1, 2, 3].map((i) => (
+                    <motion.div
+                      key={`user-wave-${i}`}
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{
+                        scale: [0.8, 1 + (userVolume / 40)],
+                        opacity: [0.4, 0],
+                        borderWidth: [1, 3, 1]
+                      }}
+                      transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.5, ease: "easeOut" }}
+                      className="absolute inset-0 rounded-full border border-cyan-500/30"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Central Orb */}
+              <motion.div
+                animate={{
+                  scale: isSpeaking ? [1, 1.08, 1] : isRecording && userVolume > 5 ? [1, 1.03, 1] : 1,
+                  borderColor: distressMode
+                    ? "#ef4444"
+                    : isSpeaking
+                      ? "#5A5A40"
+                      : isRecording && userVolume > 5
+                        ? "#06b6d4"
+                        : "rgba(255,255,255,0.1)",
+                  boxShadow: isSpeaking
+                    ? "0 0 60px rgba(90, 90, 64, 0.4)"
+                    : isRecording && userVolume > 5
+                      ? "0 0 40px rgba(6, 182, 212, 0.3)"
+                      : "0 0 20px rgba(0, 0, 0, 0.5)"
+                }}
+                transition={{ duration: 0.5 }}
+                className={`w-40 h-40 rounded-full flex items-center justify-center z-10 backdrop-blur-xl border-2 transition-all duration-700 ${distressMode ? 'bg-red-950/40' : 'bg-white/5'
+                  }`}
+              >
+                <div className="relative">
+                  {isSpeaking ? (
+                    <motion.div
+                      animate={{ opacity: [0.5, 1, 0.5] }}
+                      transition={{ repeat: Infinity, duration: 2 }}
+                    >
+                      <Volume2 size={48} className={distressMode ? 'text-red-400' : 'text-[#d4d4c8]'} />
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      animate={{
+                        scale: isRecording && userVolume > 5 ? 1.2 : 1,
+                        color: isRecording && userVolume > 5 ? "#06b6d4" : "#9ca3af"
+                      }}
+                    >
+                      <Mic size={48} />
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          <div className="mt-12 text-center">
             <motion.div
               key={isSpeaking ? 'ai' : isRecording && userVolume > 5 ? 'user' : 'idle'}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="space-y-2"
             >
-              <p className={`text-xs tracking-[0.3em] uppercase font-bold ${
-                isSpeaking ? 'text-[#5A5A40]' : isRecording && userVolume > 5 ? 'text-cyan-400' : 'text-gray-500'
-              }`}>
-                {isSpeaking ? "L'Écho s'exprime" : isRecording && userVolume > 5 ? "Vous parlez" : "À votre écoute"}
+              <p className={`text-xs tracking-[0.3em] uppercase font-bold ${isSpeaking ? 'text-[#5A5A40]' : isRecording && userVolume > 5 ? 'text-cyan-400' : 'text-gray-500'
+                }`}>
+                {activeMedia ? 'Mode Studio Activé' : isSpeaking ? "L'Écho s'exprime" : isRecording && userVolume > 5 ? "Vous parlez" : "À votre écoute"}
               </p>
               <p className="text-gray-400 text-[10px] font-sans italic opacity-60">
-                {isSpeaking ? "Écoute active en cours..." : isRecording && userVolume > 5 ? "Je vous entends bien" : "Dites quelque chose..."}
+                {activeMedia ? activeMedia.title : isSpeaking ? "Écoute active en cours..." : isRecording && userVolume > 5 ? "Je vous entends bien" : "Dites quelque chose..."}
               </p>
             </motion.div>
             {error && <p className="text-red-400 text-xs mt-4 bg-red-950/30 px-4 py-2 rounded-lg border border-red-900/50">{error}</p>}
           </div>
+
+          {/* Premium Search Results Overlay */}
+          <AnimatePresence>
+            {showResults && searchResults.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 40 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 40 }}
+                className="absolute inset-0 z-20 bg-black/80 backdrop-blur-[40px] rounded-[32px] p-8 border border-white/10 flex flex-col shadow-[0_0_100px_rgba(0,0,0,1)] ring-1 ring-white/5 overflow-hidden"
+              >
+                {/* Decorative background glow inside modal */}
+                <div className="absolute top-[-20%] right-[-20%] w-64 h-64 bg-[#5A5A40]/10 rounded-full blur-[80px]" />
+
+                <div className="flex justify-between items-center mb-8 relative z-10">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-[#5A5A40]/20 flex items-center justify-center border border-[#5A5A40]/30 shadow-inner">
+                      <Sparkles size={20} className="text-[#d4d4c8]" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold tracking-[0.2em] uppercase text-gray-400">Intelligence Atlas</h3>
+                      <p className="text-lg font-serif italic text-white/90">Échos du Web</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowResults(false)}
+                    className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all group"
+                  >
+                    <X size={20} className="text-gray-400 group-hover:text-white transition-colors" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-6 pr-4 custom-scrollbar relative z-10">
+                  {searchResults.map((result, idx) => (
+                    <motion.div
+                      key={idx}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.1, type: 'spring', damping: 20 }}
+                      className="group p-1 rounded-2xl bg-gradient-to-br from-white/10 to-transparent hover:from-[#5A5A40]/20 hover:to-transparent transition-all duration-500"
+                    >
+                      <div className="p-6 rounded-2xl bg-[#0a0502]/60 backdrop-blur-md border border-white/5 group-hover:border-white/10 transition-all">
+                        {result.renderedContent ? (
+                          <div
+                            className="rendered-content text-[15px] leading-relaxed text-gray-300 font-sans"
+                            dangerouslySetInnerHTML={{ __html: result.renderedContent }}
+                          />
+                        ) : (
+                          <a href={result.link} target="_blank" rel="noopener noreferrer" className="block">
+                            <div className="flex justify-between items-start mb-3 gap-4">
+                              <h4 className="text-base font-medium text-white group-hover:text-[#d4d4c8] transition-colors line-clamp-2 leading-snug">
+                                {result.title}
+                              </h4>
+                              <div className="p-2 rounded-lg bg-white/5 group-hover:bg-[#5A5A40]/40 transition-colors">
+                                <ExternalLink size={14} className="text-gray-400 group-hover:text-white" />
+                              </div>
+                            </div>
+                            <p className="text-sm text-gray-500 leading-relaxed font-sans font-light">
+                              {result.snippet}
+                            </p>
+                          </a>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+
+                <div className="mt-6 pt-6 border-t border-white/5 flex justify-center">
+                  <p className="text-[10px] text-gray-600 tracking-widest uppercase font-bold">Recherche optimisée par L&apos;Écho</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Email Status Toast */}
+          <AnimatePresence>
+            {emailStatus.status !== 'idle' && (
+              <motion.div
+                initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="absolute bottom-32 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-2xl bg-[#5A5A40] text-white flex items-center gap-3 shadow-2xl border border-white/20"
+              >
+                <CheckCircle2 size={18} />
+                <span className="text-sm font-medium">{emailStatus.message}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Controls */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex justify-center items-center gap-10 mt-12 mb-8"
+          className="flex justify-center items-center gap-10 mt-6 mb-8"
         >
           {!isConnected ? (
+
             <button
               onClick={startSession}
               className="group relative w-20 h-20 flex items-center justify-center"
@@ -544,15 +724,14 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
             <>
               <button
                 onClick={toggleMute}
-                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all border ${
-                  isRecording 
-                    ? 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10' 
-                    : 'bg-red-900/30 text-red-400 border-red-900/50 hover:bg-red-900/50'
-                }`}
+                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all border ${isRecording
+                  ? 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+                  : 'bg-red-900/30 text-red-400 border-red-900/50 hover:bg-red-900/50'
+                  }`}
               >
                 {isRecording ? <Mic size={24} /> : <MicOff size={24} />}
               </button>
-              
+
               <button
                 onClick={handleEndSession}
                 className="w-20 h-20 rounded-full bg-red-600 flex items-center justify-center hover:bg-red-700 transition-all transform hover:scale-105 shadow-[0_0_30px_rgba(220,38,38,0.4)] border border-white/10"
@@ -565,7 +744,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
 
         {/* Distress Alert Indicator */}
         {distressMode && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             className="flex items-center justify-center gap-2 text-red-400 bg-red-950/40 backdrop-blur-md border border-red-500/30 px-6 py-3 rounded-full text-[10px] tracking-widest uppercase font-bold mx-auto w-fit"
@@ -575,6 +754,55 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
           </motion.div>
         )}
       </div>
+      {/* Custom Styles for Rendered Search Content */}
+      <style jsx global>{`
+        .rendered-content {
+          font-family: 'Inter', system-ui, sans-serif;
+          line-height: 1.7;
+          letter-spacing: -0.01em;
+        }
+        .rendered-content a {
+          color: #d4d4c8;
+          text-decoration: none;
+          border-bottom: 1px solid rgba(90, 90, 64, 0.5);
+          transition: all 0.2s ease;
+        }
+        .rendered-content a:hover {
+          color: white;
+          border-bottom-color: #5A5A40;
+          background: rgba(90, 90, 64, 0.1);
+        }
+        .rendered-content b, .rendered-content strong {
+          color: white;
+          font-weight: 600;
+        }
+        .rendered-content h1, .rendered-content h2, .rendered-content h3 {
+          color: #d4d4c8;
+          font-family: 'serif';
+          font-style: italic;
+          margin-bottom: 0.5rem;
+        }
+        .rendered-content ul, .rendered-content ol {
+          margin: 1rem 0;
+          padding-left: 1.25rem;
+        }
+        .rendered-content li {
+          margin-bottom: 0.5rem;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(90, 90, 64, 0.4);
+        }
+      `}</style>
     </div>
   );
 }

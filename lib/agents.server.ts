@@ -1,19 +1,21 @@
-import { LlmAgent, FunctionTool, Gemini } from '@google/adk';
-import { chronosSearch, melodyRetriever } from './tools';
+import { LlmAgent, FunctionTool, Gemini, GOOGLE_SEARCH } from '@google/adk';
+import { chronosSearch, melodyRetriever, controlMedia } from './tools';
 import { archiveMemory, searchMemories, forgetMemory } from './memory';
-import { 
-  historyAgentDeclaration, 
-  cultureAgentDeclaration, 
-  archiveMemoryDeclaration, 
-  searchMemoriesDeclaration, 
-  forgetMemoryDeclaration 
+import {
+  historyAgentDeclaration,
+  cultureAgentDeclaration,
+  archiveMemoryDeclaration,
+  searchMemoriesDeclaration,
+  forgetMemoryDeclaration,
+  atlasAgentDeclaration,
+  mediaControlDeclaration
 } from './agent-declarations';
 
 const getApiKey = () => {
-  const key = process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
-              process.env.GEMINI_API_KEY || 
-              process.env.API_KEY || 
-              process.env.GOOGLE_API_KEY;
+  const key = process.env.NEXT_PUBLIC_GEMINI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.API_KEY ||
+    process.env.GOOGLE_API_KEY;
   if (!key || key === 'MY_GEMINI_API_KEY') return '';
   return key;
 };
@@ -25,7 +27,7 @@ if (!apiKey) {
 }
 
 const model = new Gemini({
-  model: 'gemini-3-flash-preview',
+  model: 'gemini-2.0-flash',
   apiKey,
 });
 
@@ -93,4 +95,28 @@ export const memoryAgent = new LlmAgent({
       },
     }),
   ],
+});
+
+// 4. Media Agent (Studio)
+export const mediaAgent = new LlmAgent({
+  name: 'MediaAgent',
+  model: model,
+  instruction: 'Expert en contenu multimédia, vidéos et musique.',
+  tools: [
+    new FunctionTool({
+      name: mediaControlDeclaration.name,
+      description: mediaControlDeclaration.description || '',
+      parameters: mediaControlDeclaration.parameters,
+      execute: async (args: any) => await controlMedia(args.mediaType, args.query),
+    }),
+  ],
+});
+
+// 5. Atlas Agent (Search Specialist)
+export const atlasAgent = new LlmAgent({
+  name: 'AtlasAgent',
+  model: model,
+  description: atlasAgentDeclaration.description,
+  instruction: 'Tu es un spécialiste de la recherche web. Utilise l\'outil de recherche Google pour fournir des réponses précises et à jour.',
+  tools: [GOOGLE_SEARCH],
 });
