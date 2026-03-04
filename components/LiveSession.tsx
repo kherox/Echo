@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Mic, MicOff, PhoneOff, AlertCircle, Clock, Volume2, Mail, CheckCircle2 } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Clock } from 'lucide-react';
 import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
 import {
   historyAgentDeclaration,
@@ -15,7 +15,12 @@ import {
   sendEmailDeclaration,
   listEmailsDeclaration
 } from '@/lib/agent-declarations';
-import { Search, Youtube, Newspaper, X, ExternalLink, Sparkles } from 'lucide-react';
+import type { ActiveMediaResult, EmailStatus, SearchResultItem } from './live/types';
+import SessionVisualizer from './live/SessionVisualizer';
+import SearchResultsOverlay from './live/SearchResultsOverlay';
+import EmailStatusToast from './live/EmailStatusToast';
+import SessionControls from './live/SessionControls';
+import DistressAlert from './live/DistressAlert';
 
 
 // triggerDistressMode tool declaration
@@ -48,8 +53,8 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
   const [error, setError] = useState<string | null>(null);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [distressMode, setDistressMode] = useState(false);
-  const [activeMedia, setActiveMedia] = useState<any>(null);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [activeMedia, setActiveMedia] = useState<ActiveMediaResult | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
   const [showResults, setShowResults] = useState(false);
 
 
@@ -84,7 +89,7 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
     4. Sois concis dans tes réponses orales, mais n'hésite pas à lancer une recherche 'atlasSearch' pour afficher des résultats visuels riches à l'écran si le sujet le justifie.
   `;
 
-  const [emailStatus, setEmailStatus] = useState<{ status: 'idle' | 'sending' | 'success', message?: string }>({ status: 'idle' });
+  const [emailStatus, setEmailStatus] = useState<EmailStatus>({ status: 'idle' });
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -469,133 +474,14 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
 
         {/* Main Content Area (Dynamic) */}
         <div className="flex-1 flex flex-col items-center justify-center py-6 relative">
-          {activeMedia && activeMedia.status === 'success' ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 30 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 30 }}
-              className="w-full flex flex-col items-center mb-8"
-            >
-              <div className="w-full relative group">
-                {/* Cinematic Glow behind video */}
-                <div className="absolute -inset-4 bg-[#5A5A40]/10 rounded-[40px] blur-2xl opacity-50 group-hover:opacity-100 transition-opacity duration-1000" />
-
-                <div className="relative overflow-hidden rounded-[32px] border border-white/10 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.8)] bg-black aspect-video">
-                  <iframe
-                    width="100%"
-                    height="100%"
-                    src={`https://www.youtube.com/embed/${activeMedia.videoId}?autoplay=1&modestbranding=1&rel=0`}
-                    title={activeMedia.title}
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-
-                  {/* Premium Overlay for close */}
-                  <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex justify-between items-center">
-                    <span className="text-[10px] text-gray-300 tracking-widest uppercase font-bold flex items-center gap-2">
-                      <Youtube size={14} className="text-red-600" />
-                      Diffusion Studio Echo
-                    </span>
-                    <button
-                      onClick={() => setActiveMedia(null)}
-                      className="p-2 bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-all"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-                className="mt-6 text-center"
-              >
-                <h4 className="text-lg font-serif italic text-white/90 drop-shadow-lg">{activeMedia.title}</h4>
-                <div className="w-12 h-[1px] bg-[#5A5A40] mx-auto mt-3 opacity-60" />
-              </motion.div>
-            </motion.div>
-          ) : (
-            <div className="relative w-64 h-64 flex items-center justify-center">
-              {/* AI Speaking Waves (Golden/Warm) */}
-              {isSpeaking && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  {[1, 2, 3].map((i) => (
-                    <motion.div
-                      key={`ai-wave-${i}`}
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: [0.8, 1.8], opacity: [0.6, 0] }}
-                      transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.8, ease: "easeOut" }}
-                      className="absolute inset-0 rounded-full border border-[#5A5A40]/40"
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* User Speaking Waves (Cyan/Cool) */}
-              {isRecording && userVolume > 5 && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  {[1, 2, 3].map((i) => (
-                    <motion.div
-                      key={`user-wave-${i}`}
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{
-                        scale: [0.8, 1 + (userVolume / 40)],
-                        opacity: [0.4, 0],
-                        borderWidth: [1, 3, 1]
-                      }}
-                      transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.5, ease: "easeOut" }}
-                      className="absolute inset-0 rounded-full border border-cyan-500/30"
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Central Orb */}
-              <motion.div
-                animate={{
-                  scale: isSpeaking ? [1, 1.08, 1] : isRecording && userVolume > 5 ? [1, 1.03, 1] : 1,
-                  borderColor: distressMode
-                    ? "#ef4444"
-                    : isSpeaking
-                      ? "#5A5A40"
-                      : isRecording && userVolume > 5
-                        ? "#06b6d4"
-                        : "rgba(255,255,255,0.1)",
-                  boxShadow: isSpeaking
-                    ? "0 0 60px rgba(90, 90, 64, 0.4)"
-                    : isRecording && userVolume > 5
-                      ? "0 0 40px rgba(6, 182, 212, 0.3)"
-                      : "0 0 20px rgba(0, 0, 0, 0.5)"
-                }}
-                transition={{ duration: 0.5 }}
-                className={`w-40 h-40 rounded-full flex items-center justify-center z-10 backdrop-blur-xl border-2 transition-all duration-700 ${distressMode ? 'bg-red-950/40' : 'bg-white/5'
-                  }`}
-              >
-                <div className="relative">
-                  {isSpeaking ? (
-                    <motion.div
-                      animate={{ opacity: [0.5, 1, 0.5] }}
-                      transition={{ repeat: Infinity, duration: 2 }}
-                    >
-                      <Volume2 size={48} className={distressMode ? 'text-red-400' : 'text-[#d4d4c8]'} />
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      animate={{
-                        scale: isRecording && userVolume > 5 ? 1.2 : 1,
-                        color: isRecording && userVolume > 5 ? "#06b6d4" : "#9ca3af"
-                      }}
-                    >
-                      <Mic size={48} />
-                    </motion.div>
-                  )}
-                </div>
-              </motion.div>
-            </div>
-          )}
+          <SessionVisualizer
+            activeMedia={activeMedia}
+            isSpeaking={isSpeaking}
+            isRecording={isRecording}
+            userVolume={userVolume}
+            distressMode={distressMode}
+            onCloseMedia={() => setActiveMedia(null)}
+          />
 
           <div className="mt-12 text-center">
             <motion.div
@@ -604,205 +490,40 @@ export default function LiveSession({ profile, onEndSession }: LiveSessionProps)
               animate={{ opacity: 1, y: 0 }}
               className="space-y-2"
             >
-              <p className={`text-xs tracking-[0.3em] uppercase font-bold ${isSpeaking ? 'text-[#5A5A40]' : isRecording && userVolume > 5 ? 'text-cyan-400' : 'text-gray-500'
-                }`}>
-                {activeMedia ? 'Mode Studio Activé' : isSpeaking ? "L'Écho s'exprime" : isRecording && userVolume > 5 ? "Vous parlez" : "À votre écoute"}
+              <p
+                className={`text-xs tracking-[0.3em] uppercase font-bold ${
+                  isSpeaking ? 'text-[#5A5A40]' : isRecording && userVolume > 5 ? 'text-cyan-400' : 'text-gray-500'
+                }`}
+              >
+                {activeMedia ? 'Mode Studio Activé' : isSpeaking ? "L'Écho s'exprime" : isRecording && userVolume > 5 ? 'Vous parlez' : 'À votre écoute'}
               </p>
               <p className="text-gray-400 text-[10px] font-sans italic opacity-60">
-                {activeMedia ? activeMedia.title : isSpeaking ? "Écoute active en cours..." : isRecording && userVolume > 5 ? "Je vous entends bien" : "Dites quelque chose..."}
+                {activeMedia
+                  ? activeMedia.title
+                  : isSpeaking
+                  ? 'Écoute active en cours...'
+                  : isRecording && userVolume > 5
+                  ? 'Je vous entends bien'
+                  : 'Dites quelque chose...'}
               </p>
             </motion.div>
             {error && <p className="text-red-400 text-xs mt-4 bg-red-950/30 px-4 py-2 rounded-lg border border-red-900/50">{error}</p>}
           </div>
 
-          {/* Premium Search Results Overlay */}
-          <AnimatePresence>
-            {showResults && searchResults.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 40 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 40 }}
-                className="absolute inset-0 z-20 bg-black/80 backdrop-blur-[40px] rounded-[32px] p-8 border border-white/10 flex flex-col shadow-[0_0_100px_rgba(0,0,0,1)] ring-1 ring-white/5 overflow-hidden"
-              >
-                {/* Decorative background glow inside modal */}
-                <div className="absolute top-[-20%] right-[-20%] w-64 h-64 bg-[#5A5A40]/10 rounded-full blur-[80px]" />
-
-                <div className="flex justify-between items-center mb-8 relative z-10">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-[#5A5A40]/20 flex items-center justify-center border border-[#5A5A40]/30 shadow-inner">
-                      <Sparkles size={20} className="text-[#d4d4c8]" />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-bold tracking-[0.2em] uppercase text-gray-400">Intelligence Atlas</h3>
-                      <p className="text-lg font-serif italic text-white/90">Échos du Web</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setShowResults(false)}
-                    className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all group"
-                  >
-                    <X size={20} className="text-gray-400 group-hover:text-white transition-colors" />
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto space-y-6 pr-4 custom-scrollbar relative z-10">
-                  {searchResults.map((result, idx) => (
-                    <motion.div
-                      key={idx}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.1, type: 'spring', damping: 20 }}
-                      className="group p-1 rounded-2xl bg-gradient-to-br from-white/10 to-transparent hover:from-[#5A5A40]/20 hover:to-transparent transition-all duration-500"
-                    >
-                      <div className="p-6 rounded-2xl bg-[#0a0502]/60 backdrop-blur-md border border-white/5 group-hover:border-white/10 transition-all">
-                        {result.renderedContent ? (
-                          <div
-                            className="rendered-content text-[15px] leading-relaxed text-gray-300 font-sans"
-                            dangerouslySetInnerHTML={{ __html: result.renderedContent }}
-                          />
-                        ) : (
-                          <a href={result.link} target="_blank" rel="noopener noreferrer" className="block">
-                            <div className="flex justify-between items-start mb-3 gap-4">
-                              <h4 className="text-base font-medium text-white group-hover:text-[#d4d4c8] transition-colors line-clamp-2 leading-snug">
-                                {result.title}
-                              </h4>
-                              <div className="p-2 rounded-lg bg-white/5 group-hover:bg-[#5A5A40]/40 transition-colors">
-                                <ExternalLink size={14} className="text-gray-400 group-hover:text-white" />
-                              </div>
-                            </div>
-                            <p className="text-sm text-gray-500 leading-relaxed font-sans font-light">
-                              {result.snippet}
-                            </p>
-                          </a>
-                        )}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-white/5 flex justify-center">
-                  <p className="text-[10px] text-gray-600 tracking-widest uppercase font-bold">Recherche optimisée par L&apos;Écho</p>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Email Status Toast */}
-          <AnimatePresence>
-            {emailStatus.status !== 'idle' && (
-              <motion.div
-                initial={{ opacity: 0, y: 20, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className="absolute bottom-32 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-2xl bg-[#5A5A40] text-white flex items-center gap-3 shadow-2xl border border-white/20"
-              >
-                <CheckCircle2 size={18} />
-                <span className="text-sm font-medium">{emailStatus.message}</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <SearchResultsOverlay show={showResults} results={searchResults} onClose={() => setShowResults(false)} />
+          <EmailStatusToast status={emailStatus} />
         </div>
 
-        {/* Controls */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex justify-center items-center gap-10 mt-6 mb-8"
-        >
-          {!isConnected ? (
+        <SessionControls
+          isConnected={isConnected}
+          isRecording={isRecording}
+          startSession={startSession}
+          toggleMute={toggleMute}
+          handleEndSession={handleEndSession}
+        />
 
-            <button
-              onClick={startSession}
-              className="group relative w-20 h-20 flex items-center justify-center"
-            >
-              <div className="absolute inset-0 bg-[#5A5A40] rounded-full blur-md opacity-40 group-hover:opacity-60 transition-opacity" />
-              <div className="relative w-full h-full rounded-full bg-[#5A5A40] flex items-center justify-center hover:bg-[#4a4a35] transition-all transform hover:scale-105 shadow-xl border border-white/10">
-                <Mic size={28} className="text-white" />
-              </div>
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={toggleMute}
-                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all border ${isRecording
-                  ? 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-                  : 'bg-red-900/30 text-red-400 border-red-900/50 hover:bg-red-900/50'
-                  }`}
-              >
-                {isRecording ? <Mic size={24} /> : <MicOff size={24} />}
-              </button>
-
-              <button
-                onClick={handleEndSession}
-                className="w-20 h-20 rounded-full bg-red-600 flex items-center justify-center hover:bg-red-700 transition-all transform hover:scale-105 shadow-[0_0_30px_rgba(220,38,38,0.4)] border border-white/10"
-              >
-                <PhoneOff size={28} className="text-white" />
-              </button>
-            </>
-          )}
-        </motion.div>
-
-        {/* Distress Alert Indicator */}
-        {distressMode && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center justify-center gap-2 text-red-400 bg-red-950/40 backdrop-blur-md border border-red-500/30 px-6 py-3 rounded-full text-[10px] tracking-widest uppercase font-bold mx-auto w-fit"
-          >
-            <AlertCircle size={16} />
-            <span>Mode Écoute Sécurisée Activé</span>
-          </motion.div>
-        )}
+        <DistressAlert visible={distressMode} />
       </div>
-      {/* Custom Styles for Rendered Search Content */}
-      <style jsx global>{`
-        .rendered-content {
-          font-family: 'Inter', system-ui, sans-serif;
-          line-height: 1.7;
-          letter-spacing: -0.01em;
-        }
-        .rendered-content a {
-          color: #d4d4c8;
-          text-decoration: none;
-          border-bottom: 1px solid rgba(90, 90, 64, 0.5);
-          transition: all 0.2s ease;
-        }
-        .rendered-content a:hover {
-          color: white;
-          border-bottom-color: #5A5A40;
-          background: rgba(90, 90, 64, 0.1);
-        }
-        .rendered-content b, .rendered-content strong {
-          color: white;
-          font-weight: 600;
-        }
-        .rendered-content h1, .rendered-content h2, .rendered-content h3 {
-          color: #d4d4c8;
-          font-family: 'serif';
-          font-style: italic;
-          margin-bottom: 0.5rem;
-        }
-        .rendered-content ul, .rendered-content ol {
-          margin: 1rem 0;
-          padding-left: 1.25rem;
-        }
-        .rendered-content li {
-          margin-bottom: 0.5rem;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 3px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(90, 90, 64, 0.4);
-        }
-      `}</style>
     </div>
   );
 }
